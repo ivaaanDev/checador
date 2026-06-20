@@ -30,6 +30,7 @@ export default async function DashboardPage() {
           </button>
           <Link href="/dashboard/employees" className="text-sm underline">Empleados</Link>
           <Link href="/dashboard/devices" className="text-sm underline">Kioscos</Link>
+          <Link href="/dashboard/attendance" className="text-sm underline">Asistencia</Link>
         </form>
       </div>
       <p className="mt-2 text-sm text-gray-600">
