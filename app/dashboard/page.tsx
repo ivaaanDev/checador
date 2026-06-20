@@ -29,6 +29,7 @@ export default async function DashboardPage() {
             Cerrar sesión
           </button>
           <Link href="/dashboard/employees" className="text-sm underline">Empleados</Link>
+          <Link href="/dashboard/devices" className="text-sm underline">Kioscos</Link>
         </form>
       </div>
       <p className="mt-2 text-sm text-gray-600">
