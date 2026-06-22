@@ -30,6 +30,7 @@ const TOKEN_KEY = 'kioskDeviceToken'
 type Phase = 'setup' | 'loading' | 'scanning' | 'challenge' | 'matching' | 'result'
 type Outcome = {
   matched: boolean
+  duplicate?: boolean
   employeeName?: string
   eventType?: 'clock_in' | 'clock_out'
   at?: string
@@ -188,6 +189,9 @@ export function KioskScanner() {
       const data = await res.json().catch(() => ({ ok: false }))
       if (res.status === 401) return showResult({ matched: false, message: 'Kiosco no autorizado' })
       if (!data.ok) return showResult({ matched: false, message: data.error ?? 'Error' })
+      if (data.duplicate) {
+        return showResult({ matched: true, duplicate: true, employeeName: data.employeeName })
+      }
       if (!data.matched) return showResult({ matched: false, message: 'Rostro no reconocido' })
       showResult({ matched: true, employeeName: data.employeeName, eventType: data.eventType, at: data.at })
     } catch {
@@ -228,8 +232,15 @@ export function KioskScanner() {
         )}
 
         {phase === 'result' && outcome && (
-          <div className={`rounded-2xl px-10 py-8 ${outcome.matched ? 'bg-green-600' : 'bg-red-600/90'}`}>
-            {outcome.matched ? (
+          <div className={`rounded-2xl px-10 py-8 ${
+            outcome.duplicate ? 'bg-amber-500' : outcome.matched ? 'bg-green-600' : 'bg-red-600/90'
+          }`}>
+            {outcome.duplicate ? (
+              <>
+                <p className="text-3xl font-bold">Ya registraste hace un momento</p>
+                <p className="mt-2 text-xl">{outcome.employeeName}</p>
+              </>
+            ) : outcome.matched ? (
               <>
                 <p className="text-4xl font-bold">
                   {outcome.eventType === 'clock_in' ? 'Entrada' : 'Salida'} registrada

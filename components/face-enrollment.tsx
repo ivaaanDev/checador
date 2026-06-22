@@ -21,8 +21,8 @@ type HumanInstance = {
 
 const TARGET_CAPTURES = 5
 const MIN_FACE_SCORE = 0.6
-const MIN_REAL = 0.8            // ↑ (antes 0.7)
-const MIN_LIVE = 0.75           // ↑ (antes 0.6)
+const MIN_REAL = 0.7            // ↑ (antes 0.7)
+const MIN_LIVE = 0.6           // ↑ (antes 0.6)
 const MIN_FACE_WIDTH_RATIO = 0.25
 const CONSISTENCY_MIN = 0.88    // calíbralo viendo el "sim" en pantalla
 
