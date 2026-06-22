@@ -8,7 +8,7 @@ import { cosineSimilarity } from '@/lib/biometrics/vector'
 export const runtime = 'nodejs'
 
 const MATCH_THRESHOLD = 0.6
-const COOLDOWN_SECONDS = 60 // ignora otra checada del mismo empleado dentro de esta ventana
+const COOLDOWN_SECONDS = 10 // ignora otra checada del mismo empleado dentro de esta ventana
 
 export async function POST(req: NextRequest) {
   const { deviceToken, embedding } = await req.json().catch(() => ({}))
