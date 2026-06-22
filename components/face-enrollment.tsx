@@ -1,3 +1,4 @@
+// components/face-enrollment.tsx
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
@@ -9,8 +10,6 @@ import { averageEmbeddings, l2normalize, cosineSimilarity } from '@/lib/biometri
 type HumanFace = {
   embedding?: number[]
   faceScore?: number
-  real?: number // antispoof: ~1 rostro real, ~0 foto/pantalla
-  live?: number // liveness
   box?: [number, number, number, number] // x, y, w, h en px
 }
 type HumanInstance = {
@@ -19,12 +18,14 @@ type HumanInstance = {
   detect: (input: HTMLVideoElement) => Promise<{ face: HumanFace[] }>
 }
 
-const TARGET_CAPTURES = 5
-const MIN_FACE_SCORE = 0.6
-const MIN_REAL = 0.7            // ↑ (antes 0.7)
-const MIN_LIVE = 0.6           // ↑ (antes 0.6)
-const MIN_FACE_WIDTH_RATIO = 0.25
-const CONSISTENCY_MIN = 0.88    // calíbralo viendo el "sim" en pantalla
+// El enrolamiento es SUPERVISADO: no peleamos spoofing aquí (eso vive en el
+// kiosco). Solo pedimos un rostro claro, único y de buen tamaño. La protección
+// contra oclusión (mano frente a la cara) se hace al final, descartando los
+// frames más atípicos — sin ningún umbral que calibrar ni que te bloquee.
+const TARGET_CAPTURES = 6   // capturamos 6 de corrido
+const MIN_CAPTURES = 4      // cuántos sobreviven al descarte de atípicos
+const MIN_FACE_SCORE = 0.5  // "hay un rostro claro", nada más
+const MIN_FACE_WIDTH_RATIO = 0.22
 
 type Phase = 'idle' | 'loading' | 'capturing' | 'saving' | 'done' | 'error'
 
@@ -74,8 +75,8 @@ export function FaceEnrollment({
           detector: { rotation: false },
           mesh: { enabled: true },
           description: { enabled: true }, // -> face.embedding
-          antispoof: { enabled: true },   // -> face.real
-          liveness: { enabled: true },    // -> face.live
+          antispoof: { enabled: false },  // no se usa en enrolamiento (supervisado)
+          liveness: { enabled: false },   // idem -> menos modelos, carga más rápida
           iris: { enabled: false },
           emotion: { enabled: false },
           attention: { enabled: false },
@@ -112,41 +113,29 @@ export function FaceEnrollment({
     const human = humanRef.current
     const video = videoRef.current
     if (!human || !video) return
-  
+
     const faces = (await human.detect(video)).face ?? []
     if (faces.length === 0) return setReadout('No se detecta rostro')
     if (faces.length > 1) return setReadout('Se detecta más de un rostro')
-  
+
     const f = faces[0]
     const score = f.faceScore ?? 0
-    const real = f.real ?? 0
-    const live = f.live ?? 0
     const wRatio = f.box ? f.box[2] / video.videoWidth : 0
-  
+    setReadout(`score ${score.toFixed(2)} · capturas ${capturesRef.current.length}/${TARGET_CAPTURES}`)
+
+    // Solo: rostro claro, único y de tamaño suficiente. Sin antispoof/liveness.
     if (wRatio < MIN_FACE_WIDTH_RATIO) return setReadout('Acércate más a la cámara')
-    if (score < MIN_FACE_SCORE) return setReadout(`Rostro poco claro (${score.toFixed(2)})`)
-    if (real < MIN_REAL) return setReadout('Posible foto/pantalla: usa tu rostro real')
-    if (live < MIN_LIVE) return setReadout('Liveness bajo: mira a la cámara')
+    if (score < MIN_FACE_SCORE) return setReadout('Mira de frente a la cámara')
     if (!f.embedding?.length) return
-  
-    // Consistencia: si pasas la mano o algo tapa la cara, ese embedding es un
-    // outlier respecto a lo ya capturado y se descarta.
-    const accepted = capturesRef.current
-    let sim = 1
-    if (accepted.length > 0) {
-      sim = cosineSimilarity(f.embedding, averageEmbeddings(accepted))
-      if (sim < CONSISTENCY_MIN)
-        return setReadout(`Inconsistente (sim ${sim.toFixed(2)}) — despeja la cara y no te muevas`)
-    }
-    setReadout(`score ${score.toFixed(2)} · real ${real.toFixed(2)} · live ${live.toFixed(2)} · sim ${sim.toFixed(2)}`)
-  
+
     const now = Date.now()
-    if (now - lastCapRef.current < 600) return
+    if (now - lastCapRef.current < 500) return
     lastCapRef.current = now
-  
-    accepted.push(f.embedding)
-    setCount(accepted.length)
-    if (accepted.length >= TARGET_CAPTURES) {
+
+    capturesRef.current.push(f.embedding)
+    const n = capturesRef.current.length
+    setCount(n)
+    if (n >= TARGET_CAPTURES) {
       if (loopRef.current) clearInterval(loopRef.current)
       loopRef.current = null
       await finalize()
@@ -156,14 +145,16 @@ export function FaceEnrollment({
   async function finalize() {
     setPhase('saving')
     try {
-      let caps = capturesRef.current
+      const caps = capturesRef.current
+      // Descarta los frames más alejados del "rostro promedio" (mano tapando,
+      // parpadeo raro). Sin umbral: nos quedamos con los mejores.
       const centroid = averageEmbeddings(caps)
-      caps = caps.filter((c) => cosineSimilarity(c, centroid) >= CONSISTENCY_MIN)
-      if (caps.length < 3) {
-        setError('Captura inconsistente (cara tapada o movimiento). Reintenta despejado.')
-        setPhase('error'); cleanup(); return
-      }
-      const mean = l2normalize(averageEmbeddings(caps))
+      const ranked = caps
+        .map((c) => ({ c, sim: cosineSimilarity(c, centroid) }))
+        .sort((a, b) => b.sim - a.sim)
+      const kept = ranked.slice(0, Math.max(MIN_CAPTURES, caps.length - 2)).map((r) => r.c)
+
+      const mean = l2normalize(averageEmbeddings(kept))
       const result = await saveFaceEnrollment(employeeId, mean, 1)
       cleanup()
       if (result.ok) setPhase('done')
@@ -182,7 +173,7 @@ export function FaceEnrollment({
 
       {phase === 'capturing' && (
         <div className="text-sm text-gray-600">
-          <p>Capturas buenas: {count}/{TARGET_CAPTURES}</p>
+          <p>Capturas: {count}/{TARGET_CAPTURES}</p>
           <p className="text-xs">{readout}</p>
         </div>
       )}
