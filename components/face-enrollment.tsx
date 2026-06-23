@@ -6,11 +6,10 @@ import { useRouter } from 'next/navigation'
 import { saveFaceEnrollment } from '@/app/dashboard/employees/actions'
 import { averageEmbeddings, l2normalize, cosineSimilarity } from '@/lib/biometrics/vector'
 
-// Tipos mínimos de human (no importamos los tipos completos para no inflar nada).
 type HumanFace = {
   embedding?: number[]
   faceScore?: number
-  box?: [number, number, number, number] // x, y, w, h en px
+  box?: [number, number, number, number]
 }
 type HumanInstance = {
   load: () => Promise<void>
@@ -18,16 +17,13 @@ type HumanInstance = {
   detect: (input: HTMLVideoElement) => Promise<{ face: HumanFace[] }>
 }
 
-// El enrolamiento es SUPERVISADO: no peleamos spoofing aquí (eso vive en el
-// kiosco). Solo pedimos un rostro claro, único y de buen tamaño. La protección
-// contra oclusión (mano frente a la cara) se hace al final, descartando los
-// frames más atípicos — sin ningún umbral que calibrar ni que te bloquee.
-const TARGET_CAPTURES = 6   // capturamos 6 de corrido
-const MIN_CAPTURES = 4      // cuántos sobreviven al descarte de atípicos
-const MIN_FACE_SCORE = 0.5  // "hay un rostro claro", nada más
+// Enrolamiento SUPERVISADO: solo rostro claro, único y de buen tamaño.
+const TARGET_CAPTURES = 6
+const MIN_CAPTURES = 4
+const MIN_FACE_SCORE = 0.5
 const MIN_FACE_WIDTH_RATIO = 0.22
 
-type Phase = 'idle' | 'loading' | 'capturing' | 'saving' | 'done' | 'error'
+type Phase = 'loading' | 'ready' | 'capturing' | 'saving' | 'done' | 'error'
 
 export function FaceEnrollment({
   employeeId,
@@ -43,70 +39,79 @@ export function FaceEnrollment({
   const loopRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const capturesRef = useRef<number[][]>([])
   const lastCapRef = useRef(0)
+  const startedRef = useRef(false)
 
-  const [phase, setPhase] = useState<Phase>('idle')
+  const [phase, setPhase] = useState<Phase>('loading')
   const [count, setCount] = useState(0)
   const [readout, setReadout] = useState('')
   const [error, setError] = useState('')
 
+  function stopLoop() { if (loopRef.current) clearInterval(loopRef.current); loopRef.current = null }
   function cleanup() {
-    if (loopRef.current) clearInterval(loopRef.current)
-    loopRef.current = null
+    stopLoop()
     streamRef.current?.getTracks().forEach((t) => t.stop())
     streamRef.current = null
   }
-  useEffect(() => cleanup, []) // limpia al desmontar
 
-  async function start() {
+  useEffect(() => {
+    void boot()
+    return cleanup
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Prende cámara + modelos de inmediato y deja el PREVIEW listo, sin capturar.
+  async function boot() {
+    if (startedRef.current) return
+    startedRef.current = true
     setError('')
     setPhase('loading')
-    capturesRef.current = []
-    setCount(0)
     try {
-      const { Human } = await import('@vladmandic/human') // solo en el navegador
+      const { Human } = await import('@vladmandic/human')
       const human = new Human({
         backend: 'webgl',
-        // DEV: CDN oficial de modelos (cero setup).
-        // PROD: copia los modelos a /public/models y pon modelBasePath: '/models'.
         modelBasePath: 'https://vladmandic.github.io/human-models/models/',
         filter: { enabled: true, equalization: false },
         face: {
           enabled: true,
           detector: { rotation: false },
           mesh: { enabled: true },
-          description: { enabled: true }, // -> face.embedding
-          antispoof: { enabled: false },  // no se usa en enrolamiento (supervisado)
-          liveness: { enabled: false },   // idem -> menos modelos, carga más rápida
-          iris: { enabled: false },
-          emotion: { enabled: false },
-          attention: { enabled: false },
+          description: { enabled: true },
+          antispoof: { enabled: false }, // supervisado: sin antispoof/liveness
+          liveness: { enabled: false },
+          iris: { enabled: false }, emotion: { enabled: false }, attention: { enabled: false },
         },
-        body: { enabled: false },
-        hand: { enabled: false },
-        object: { enabled: false },
-        gesture: { enabled: false },
+        body: { enabled: false }, hand: { enabled: false },
+        object: { enabled: false }, gesture: { enabled: false },
       }) as unknown as HumanInstance
-
-      await human.load()    // primera vez descarga modelos (se cachean en IndexedDB)
+      await human.load()
       await human.warmup()
       humanRef.current = human
 
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 640, height: 480, facingMode: 'user' },
-        audio: false,
+        video: { width: 640, height: 480, facingMode: 'user' }, audio: false,
       })
       streamRef.current = stream
-      if (!videoRef.current) return
-      videoRef.current.srcObject = stream
-      await videoRef.current.play()
-
-      setPhase('capturing')
-      loopRef.current = setInterval(tick, 250)
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+        await videoRef.current.play()
+      }
+      setPhase('ready') // cámara encendida; espera a que el usuario encuadre e inicie
     } catch (e) {
+      startedRef.current = false
       setError(e instanceof Error ? e.message : 'Error al iniciar la cámara')
       setPhase('error')
       cleanup()
     }
+  }
+
+  // El usuario ya enfocó su cara: ahora sí capturamos (rápido).
+  function startCapture() {
+    capturesRef.current = []
+    setCount(0)
+    setReadout('')
+    setPhase('capturing')
+    stopLoop()
+    loopRef.current = setInterval(tick, 250)
   }
 
   async function tick() {
@@ -123,7 +128,6 @@ export function FaceEnrollment({
     const wRatio = f.box ? f.box[2] / video.videoWidth : 0
     setReadout(`score ${score.toFixed(2)} · capturas ${capturesRef.current.length}/${TARGET_CAPTURES}`)
 
-    // Solo: rostro claro, único y de tamaño suficiente. Sin antispoof/liveness.
     if (wRatio < MIN_FACE_WIDTH_RATIO) return setReadout('Acércate más a la cámara')
     if (score < MIN_FACE_SCORE) return setReadout('Mira de frente a la cámara')
     if (!f.embedding?.length) return
@@ -136,8 +140,7 @@ export function FaceEnrollment({
     const n = capturesRef.current.length
     setCount(n)
     if (n >= TARGET_CAPTURES) {
-      if (loopRef.current) clearInterval(loopRef.current)
-      loopRef.current = null
+      stopLoop()
       await finalize()
     }
   }
@@ -146,8 +149,7 @@ export function FaceEnrollment({
     setPhase('saving')
     try {
       const caps = capturesRef.current
-      // Descarta los frames más alejados del "rostro promedio" (mano tapando,
-      // parpadeo raro). Sin umbral: nos quedamos con los mejores.
+      // Descarta los 2 frames más atípicos (mano tapando, parpadeo) sin umbral.
       const centroid = averageEmbeddings(caps)
       const ranked = caps
         .map((c) => ({ c, sim: cosineSimilarity(c, centroid) }))
@@ -171,19 +173,26 @@ export function FaceEnrollment({
         <video ref={videoRef} muted playsInline className="h-full w-full object-cover" />
       </div>
 
+      {phase === 'loading' && <p className="text-sm text-gray-600">Encendiendo cámara y cargando modelos…</p>}
+
+      {phase === 'ready' && (
+        <div className="flex flex-col gap-2">
+          <p className="text-sm text-gray-600">Encuadra tu rostro en la cámara y luego inicia.</p>
+          <button onClick={startCapture} className="w-fit rounded bg-black px-4 py-2 text-white">
+            Iniciar enrolamiento
+          </button>
+        </div>
+      )}
+
       {phase === 'capturing' && (
         <div className="text-sm text-gray-600">
           <p>Capturas: {count}/{TARGET_CAPTURES}</p>
           <p className="text-xs">{readout}</p>
         </div>
       )}
-      {phase === 'idle' && (
-        <button onClick={start} className="rounded bg-black px-4 py-2 text-white">
-          Iniciar enrolamiento
-        </button>
-      )}
-      {phase === 'loading' && <p className="text-sm text-gray-600">Cargando modelos y cámara…</p>}
+
       {phase === 'saving' && <p className="text-sm text-gray-600">Guardando rostro…</p>}
+
       {phase === 'done' && (
         <div className="flex items-center gap-3">
           <p className="text-sm text-green-700">✓ Rostro enrolado para {employeeName}.</p>
@@ -191,10 +200,12 @@ export function FaceEnrollment({
             className="rounded border px-3 py-1 text-sm">Volver a empleados</button>
         </div>
       )}
+
       {phase === 'error' && (
         <div className="flex flex-col gap-2">
           <p className="text-sm text-red-600">{error}</p>
-          <button onClick={start} className="w-fit rounded border px-3 py-1 text-sm">Reintentar</button>
+          <button onClick={() => { startedRef.current = false; void boot() }}
+            className="w-fit rounded border px-3 py-1 text-sm">Reintentar</button>
         </div>
       )}
     </div>

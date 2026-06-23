@@ -17,12 +17,13 @@ type HumanInstance = {
   detect: (input: HTMLVideoElement) => Promise<{ face: HumanFace[] }>
 }
 
+// Si calibraste estos valores en las pruebas, CONSERVA los tuyos.
 const MIN_FACE_SCORE = 0.6
 const MIN_REAL = 0.8
 const MIN_LIVE = 0.75
 const MIN_FACE_WIDTH_RATIO = 0.25
-const FRONTAL_YAW_MAX = 0.18 // rad (~10°). CALÍBRALO con el readout.
-const TURN_YAW_MIN = 0.45    // rad (~26°): "claramente girado".
+const FRONTAL_YAW_MAX = 0.18
+const TURN_YAW_MIN = 0.45
 const CHALLENGE_MS = 7000
 const RESULT_MS = 3500
 const TOKEN_KEY = 'kioskDeviceToken'
@@ -42,10 +43,11 @@ export function KioskScanner() {
   const humanRef = useRef<HumanInstance | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const loopRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const resultTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const candidateRef = useRef<number[] | null>(null)
   const turnedRef = useRef(false)
-  const armedRef = useRef(true)              // anti doble-checada: re-arma al salir el rostro
+  const armedRef = useRef(true)
   const challengeStartRef = useRef(0)
   const tokenRef = useRef('')
 
@@ -56,8 +58,10 @@ export function KioskScanner() {
   const [outcome, setOutcome] = useState<Outcome | null>(null)
 
   function stopLoop() { if (loopRef.current) clearInterval(loopRef.current); loopRef.current = null }
+  function clearResultTimer() { if (resultTimeoutRef.current) clearTimeout(resultTimeoutRef.current); resultTimeoutRef.current = null }
   function cleanup() {
     stopLoop()
+    clearResultTimer()
     streamRef.current?.getTracks().forEach((t) => t.stop())
     streamRef.current = null
   }
@@ -86,8 +90,7 @@ export function KioskScanner() {
         filter: { enabled: true, equalization: false },
         face: {
           enabled: true,
-          detector: { rotation: false }, // los ángulos salen del mesh; si pierde
-                                          // la cara al girar, pon rotation: true
+          detector: { rotation: false },
           mesh: { enabled: true },
           description: { enabled: true },
           antispoof: { enabled: true },
@@ -115,14 +118,23 @@ export function KioskScanner() {
   }
 
   function startScanning(requireClear: boolean) {
+    clearResultTimer()
     candidateRef.current = null
     turnedRef.current = false
-    armedRef.current = !requireClear // tras una checada, espera a que el rostro salga
+    armedRef.current = !requireClear
     setOutcome(null)
     setPhase('scanning')
     setHint('Acércate y mira a la cámara')
     stopLoop()
     loopRef.current = setInterval(scanTick, 200)
+  }
+
+  // Botón "Siguiente / Reiniciar": vuelve a escanear de inmediato, listo para
+  // la siguiente persona, sin esperar el ciclo automático. El cooldown del
+  // servidor sigue evitando que se duplique a la MISMA persona.
+  function manualReset() {
+    if (!humanRef.current) return
+    startScanning(false)
   }
 
   async function scanTick() {
@@ -147,7 +159,7 @@ export function KioskScanner() {
     if (Math.abs(yaw) > FRONTAL_YAW_MAX) { setHint('Mira de frente'); return }
     if (!f.embedding?.length) return
 
-    candidateRef.current = f.embedding // frame frontal bueno
+    candidateRef.current = f.embedding
     startChallenge()
   }
 
@@ -189,9 +201,7 @@ export function KioskScanner() {
       const data = await res.json().catch(() => ({ ok: false }))
       if (res.status === 401) return showResult({ matched: false, message: 'Kiosco no autorizado' })
       if (!data.ok) return showResult({ matched: false, message: data.error ?? 'Error' })
-      if (data.duplicate) {
-        return showResult({ matched: true, duplicate: true, employeeName: data.employeeName })
-      }
+      if (data.duplicate) return showResult({ matched: true, duplicate: true, employeeName: data.employeeName })
       if (!data.matched) return showResult({ matched: false, message: 'Rostro no reconocido' })
       showResult({ matched: true, employeeName: data.employeeName, eventType: data.eventType, at: data.at })
     } catch {
@@ -202,7 +212,8 @@ export function KioskScanner() {
   function showResult(o: Outcome) {
     setOutcome(o)
     setPhase('result')
-    setTimeout(() => startScanning(true), RESULT_MS) // re-arma exigiendo rostro despejado
+    clearResultTimer()
+    resultTimeoutRef.current = setTimeout(() => startScanning(true), RESULT_MS)
   }
 
   if (phase === 'setup') {
@@ -221,6 +232,15 @@ export function KioskScanner() {
     <div className="relative min-h-screen overflow-hidden bg-black text-white">
       <video ref={videoRef} muted playsInline
         className="absolute inset-0 h-full w-full object-cover opacity-90" />
+
+      {/* Reinicio manual: pasar al siguiente trabajador de inmediato */}
+      {phase !== 'loading' && (
+        <button onClick={manualReset}
+          className="absolute right-4 top-4 z-20 rounded-full bg-white/90 px-5 py-3 text-base font-semibold text-black shadow-lg active:scale-95">
+          Siguiente / Reiniciar
+        </button>
+      )}
+
       <div className="relative z-10 flex min-h-screen flex-col items-center justify-end gap-4 p-8 text-center">
         {phase === 'loading' && <p className="text-2xl">Iniciando…</p>}
 
