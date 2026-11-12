@@ -2,6 +2,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { CheckIcon, MarkIcon, RefreshIcon } from '@/components/icons'
 
 type HumanFace = {
   embedding?: number[]
@@ -66,12 +67,6 @@ export function KioskScanner() {
     streamRef.current = null
   }
 
-  useEffect(() => {
-    const saved = typeof window !== 'undefined' ? localStorage.getItem(TOKEN_KEY) : null
-    if (saved) { tokenRef.current = saved; void boot() }
-    return cleanup
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
 
   function saveToken() {
     if (!tokenInput.trim()) return
@@ -165,6 +160,7 @@ export function KioskScanner() {
 
   function startChallenge() {
     turnedRef.current = false
+    // The challenge needs an elapsed-time deadline independent of React renders.
     challengeStartRef.current = Date.now()
     setPhase('challenge')
     setHint('Gira la cabeza a un lado y vuelve al frente')
@@ -216,66 +212,89 @@ export function KioskScanner() {
     resultTimeoutRef.current = setTimeout(() => startScanning(true), RESULT_MS)
   }
 
+  useEffect(() => {
+    const saved = localStorage.getItem(TOKEN_KEY)
+    if (saved) {
+      tokenRef.current = saved
+      void boot()
+    }
+    return cleanup
+    // Camera boot should only run once when the kiosk mounts.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   if (phase === 'setup') {
     return (
-      <div className="mx-auto flex min-h-screen max-w-sm flex-col justify-center gap-4 p-6">
-        <h1 className="text-xl font-semibold">Configurar kiosco</h1>
-        <p className="text-sm text-gray-600">Pega el token de este kiosco (generado en Kioscos).</p>
-        <input value={tokenInput} onChange={(e) => setTokenInput(e.target.value)}
-          placeholder="token del kiosco" className="rounded border px-3 py-2" />
-        <button onClick={saveToken} className="rounded bg-black px-4 py-2 text-white">Activar kiosco</button>
-      </div>
+      <main className="flex min-h-screen items-center justify-center bg-[#f7f7f3] p-6">
+        <div className="w-full max-w-md animate-[page-in_500ms_ease-out_both]">
+          <span className="mb-8 grid h-12 w-12 place-items-center rounded-full bg-black text-white"><MarkIcon className="h-5 w-5" /></span>
+          <p className="eyebrow mb-3">Una sola vez</p>
+          <h1 className="text-4xl font-semibold tracking-[-0.06em]">Activa este kiosco.</h1>
+          <p className="mt-4 text-sm leading-relaxed text-[#696963]">Pega el token que creaste desde la sección Kioscos.</p>
+          <form className="mt-8 flex flex-col gap-3" onSubmit={(event) => { event.preventDefault(); saveToken() }}>
+            <input value={tokenInput} onChange={(event) => setTokenInput(event.target.value)}
+              placeholder="Token del kiosco" aria-label="Token del kiosco" className="field font-mono text-sm" />
+            <button type="submit" disabled={!tokenInput.trim()} className="btn-primary">Activar y empezar</button>
+          </form>
+        </div>
+      </main>
     )
   }
 
+  const isActive = phase === 'scanning' || phase === 'challenge' || phase === 'matching'
+
   return (
-    <div className="relative min-h-screen overflow-hidden bg-black text-white">
-      <video ref={videoRef} muted playsInline
-        className="absolute inset-0 h-full w-full object-cover opacity-90" />
+    <main className="relative min-h-screen overflow-hidden bg-black text-white">
+      <video ref={videoRef} muted playsInline className="absolute inset-0 h-full w-full scale-x-[-1] object-cover opacity-75" />
+      <div className="pointer-events-none absolute inset-0 bg-linear-to-b from-black/45 via-transparent to-black/80" />
+      <div className="pointer-events-none absolute inset-[10%] rounded-[42%] border border-white/45 shadow-[0_0_0_999px_rgba(0,0,0,.12)] sm:inset-[12%_30%]" />
+      {phase === 'scanning' && <div className="pointer-events-none absolute inset-x-[10%] top-[10%] h-px animate-[scan-line_2.4s_ease-in-out_infinite] bg-white/70 shadow-[0_0_12px_white] sm:inset-x-[30%]" />}
 
-      {/* Reinicio manual: pasar al siguiente trabajador de inmediato */}
-      {phase !== 'loading' && (
-        <button onClick={manualReset}
-          className="absolute right-4 top-4 z-20 rounded-full bg-white/90 px-5 py-3 text-base font-semibold text-black shadow-lg active:scale-95">
-          Siguiente / Reiniciar
-        </button>
-      )}
+      <div className="absolute inset-x-0 top-0 z-20 flex items-center justify-between p-5 sm:p-8">
+        <div className="brand p-0 text-white"><span className="brand-mark bg-white text-black"><MarkIcon /></span><span>checador.</span></div>
+        {phase !== 'loading' && (
+          <button onClick={manualReset} aria-label="Escanear a la siguiente persona" className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-black/40 px-4 py-2.5 text-sm font-medium text-white backdrop-blur-md transition hover:bg-white hover:text-black active:scale-95">
+            <RefreshIcon className="h-4 w-4" /> <span className="hidden sm:inline">Siguiente</span>
+          </button>
+        )}
+      </div>
 
-      <div className="relative z-10 flex min-h-screen flex-col items-center justify-end gap-4 p-8 text-center">
-        {phase === 'loading' && <p className="text-2xl">Iniciando…</p>}
-
-        {(phase === 'scanning' || phase === 'challenge' || phase === 'matching') && (
-          <div className="rounded-2xl bg-black/60 px-8 py-6">
-            <p className="text-3xl font-semibold">{hint}</p>
-            <p className="mt-2 text-xs text-white/40">{readout}</p>
+      <div className="relative z-10 flex min-h-screen flex-col items-center justify-end p-6 pb-10 text-center sm:p-10">
+        {phase === 'loading' && (
+          <div className="flex flex-col items-center gap-4">
+            <span className="animate-[breathe_1.6s_ease-in-out_infinite] rounded-full border border-white/30 p-5"><MarkIcon className="h-6 w-6" /></span>
+            <p className="text-sm text-white/60">Preparando la cámara…</p>
           </div>
         )}
 
+        {isActive && (
+          <div className="w-full max-w-2xl" role="status" aria-live="polite"><div className="rounded-2xl border border-white/15 bg-black/55 px-6 py-5 backdrop-blur-xl sm:px-10 sm:py-7">
+            <p className="text-2xl font-semibold tracking-[-0.04em] sm:text-4xl">{hint}</p>
+            <p className="mt-3 font-mono text-[9px] text-white/35">{readout}</p>
+          </div></div>
+        )}
+
         {phase === 'result' && outcome && (
-          <div className={`rounded-2xl px-10 py-8 ${
-            outcome.duplicate ? 'bg-amber-500' : outcome.matched ? 'bg-green-600' : 'bg-red-600/90'
+          <div role="status" aria-live="assertive" className={`w-full max-w-2xl animate-[page-in_300ms_ease-out_both] rounded-2xl border px-8 py-8 backdrop-blur-xl sm:px-12 sm:py-10 ${
+            outcome.matched ? 'border-white/20 bg-white text-black' : 'border-white/15 bg-black/75 text-white'
           }`}>
+            <span className={`mx-auto mb-5 grid h-12 w-12 place-items-center rounded-full ${outcome.matched ? 'bg-black text-white' : 'border border-white/25'}`}>
+              {outcome.matched ? <CheckIcon className="h-5 w-5" /> : <RefreshIcon className="h-5 w-5" />}
+            </span>
             {outcome.duplicate ? (
-              <>
-                <p className="text-3xl font-bold">Ya registraste hace un momento</p>
-                <p className="mt-2 text-xl">{outcome.employeeName}</p>
-              </>
+              <><p className="text-2xl font-semibold tracking-[-0.04em] sm:text-3xl">Ya quedó registrado.</p><p className="mt-2 text-lg opacity-60">{outcome.employeeName}</p></>
             ) : outcome.matched ? (
               <>
-                <p className="text-4xl font-bold">
-                  {outcome.eventType === 'clock_in' ? 'Entrada' : 'Salida'} registrada
-                </p>
-                <p className="mt-2 text-2xl">{outcome.employeeName}</p>
-                <p className="mt-1 text-lg text-white/80">
-                  {outcome.at ? new Date(outcome.at).toLocaleTimeString() : ''}
-                </p>
+                <p className="eyebrow mb-3">{outcome.eventType === 'clock_in' ? 'Entrada' : 'Salida'}</p>
+                <p className="text-3xl font-semibold tracking-tighter sm:text-5xl">Listo, {outcome.employeeName}.</p>
+                <p className="mt-3 font-mono text-sm opacity-55">{outcome.at ? new Date(outcome.at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }) : ''}</p>
               </>
             ) : (
-              <p className="text-3xl font-semibold">{outcome.message}</p>
+              <><p className="text-2xl font-semibold tracking-[-0.04em] sm:text-3xl">{outcome.message}</p><p className="mt-3 text-sm text-white/50">Vamos a intentarlo otra vez.</p></>
             )}
           </div>
         )}
       </div>
-    </div>
+    </main>
   )
 }

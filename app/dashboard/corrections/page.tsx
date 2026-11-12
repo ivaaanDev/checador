@@ -1,9 +1,8 @@
-// app/dashboard/corrections/page.tsx
-import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { buildSessions, type RawEvent } from '@/lib/attendance/timesheet'
 import { closeOpenSession } from './actions'
+import { AdjustIcon, CheckIcon, ClockIcon } from '@/components/icons'
 
 const DAYS = 14
 
@@ -18,97 +17,104 @@ export default async function CorrectionsPage({
   const { data: memberships } = await supabase
     .from('business_members').select('business_id, businesses(timezone)').limit(1)
   if (!memberships || memberships.length === 0) redirect('/onboarding')
-  const biz = Array.isArray(memberships[0].businesses) ? memberships[0].businesses[0] : memberships[0].businesses
-  const tz = biz?.timezone ?? 'America/Mexico_City'
+  const business = Array.isArray(memberships[0].businesses) ? memberships[0].businesses[0] : memberships[0].businesses
+  const timezone = business?.timezone ?? 'America/Mexico_City'
 
+  // This server query intentionally uses a rolling window from request time.
+  // eslint-disable-next-line react-hooks/purity
   const since = new Date(Date.now() - DAYS * 86_400_000).toISOString()
   const { data: rows } = await supabase
     .from('attendance_events')
     .select('id, employee_id, event_type, captured_at, employees(full_name)')
     .gte('captured_at', since).order('captured_at', { ascending: true })
 
-  const events: RawEvent[] = (rows ?? []).map((r) => {
-    const emp = Array.isArray(r.employees) ? r.employees[0] : r.employees
+  const events: RawEvent[] = (rows ?? []).map((row) => {
+    const employee = Array.isArray(row.employees) ? row.employees[0] : row.employees
     return {
-      id: r.id as string, employeeId: r.employee_id as string,
-      name: (emp?.full_name as string) ?? 'Desconocido',
-      eventType: r.event_type as RawEvent['eventType'],
-      capturedAt: r.captured_at as string,
+      id: row.id as string,
+      employeeId: row.employee_id as string,
+      name: (employee?.full_name as string) ?? 'Desconocido',
+      eventType: row.event_type as RawEvent['eventType'],
+      capturedAt: row.captured_at as string,
     }
   })
 
-  const { data: corrRows } = await supabase
+  const { data: correctionRows } = await supabase
     .from('attendance_corrections')
     .select('id, event_id, corrected_time, reason, status, created_at, employees(full_name)')
     .order('created_at', { ascending: false })
 
-  // Entradas ya cerradas por corrección -> no volver a ofrecerlas.
   const closedInIds = new Set(
-    (corrRows ?? []).filter((c) => c.status === 'approved' && c.event_id).map((c) => c.event_id as string),
+    (correctionRows ?? []).filter((correction) => correction.status === 'approved' && correction.event_id).map((correction) => correction.event_id as string),
   )
   const openSessions = buildSessions(events)
-    .filter((s) => s.outAt === null && !closedInIds.has(s.inEventId))
+    .filter((session) => session.outAt === null && !closedInIds.has(session.inEventId))
     .sort((a, b) => b.inAt.localeCompare(a.inAt))
 
-  const dtFmt = new Intl.DateTimeFormat('es-MX', { timeZone: tz, dateStyle: 'medium', timeStyle: 'short' })
-  const recent = (corrRows ?? []).slice(0, 15).map((c) => {
-    const emp = Array.isArray(c.employees) ? c.employees[0] : c.employees
-    return { ...c, name: emp?.full_name ?? 'Desconocido' }
+  const dateTimeFormat = new Intl.DateTimeFormat('es-MX', { timeZone: timezone, dateStyle: 'medium', timeStyle: 'short' })
+  const recent = (correctionRows ?? []).slice(0, 15).map((correction) => {
+    const employee = Array.isArray(correction.employees) ? correction.employees[0] : correction.employees
+    return { ...correction, name: employee?.full_name ?? 'Desconocido' }
   })
 
   return (
-    <main className="mx-auto max-w-3xl p-6">
-      <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Correcciones</h1>
-        <Link href="/dashboard/attendance" className="text-sm text-gray-600 underline">← Asistencia</Link>
+    <main className="dashboard-page">
+      <header className="mb-10">
+        <p className="eyebrow mb-4">Pendientes</p>
+        <h1 className="page-title">Todo cuadrado.</h1>
+        <p className="page-copy mt-5">Cierra entradas sin salida usando la hora real. Nada más.</p>
+      </header>
+
+      {error && <p className="error-note mb-5" role="alert">{error}</p>}
+
+      <div className="mb-4 flex items-center justify-between border-b border-[#deded7] pb-3">
+        <h2 className="text-sm font-semibold">Sesiones abiertas</h2>
+        <span className="font-mono text-xs text-[#696963]">{openSessions.length}</span>
       </div>
-      {error && <p className="mb-3 text-sm text-red-600">{error}</p>}
-
-      <h2 className="mb-1 text-sm font-semibold">Sesiones abiertas ({openSessions.length})</h2>
-      <p className="mb-3 text-xs text-gray-500">
-        Entradas sin salida. Ciérralas con la hora real (en {tz}). Si la persona marca
-        su salida por cámara después, esa salida real tendrá prioridad sobre la corrección.
-      </p>
-
-      <ul className="mb-8 flex flex-col gap-3">
-        {openSessions.map((s) => (
-          <li key={s.inEventId} className="rounded border p-4">
-            <p className="text-sm font-medium">{s.name}</p>
-            <p className="mb-2 text-xs text-gray-500">Entrada: {dtFmt.format(new Date(s.inAt))}</p>
-            <form className="flex flex-wrap items-center gap-2">
-              <input type="hidden" name="employee_id" value={s.employeeId} />
-              <input type="hidden" name="clock_in_event_id" value={s.inEventId} />
-              <input type="datetime-local" name="out_local" required className="rounded border px-3 py-2 text-sm" />
-              <input name="reason" placeholder="Motivo" required className="flex-1 rounded border px-3 py-2 text-sm" />
-              <button formAction={closeOpenSession} className="rounded bg-black px-4 py-2 text-sm text-white">
-                Cerrar sesión
-              </button>
+      <ul className="flex flex-col gap-3">
+        {openSessions.map((session) => (
+          <li key={session.inEventId} className="panel p-5">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <p className="font-medium">{session.name}</p>
+                <p className="mt-1 flex items-center gap-2 text-xs text-[#696963]"><ClockIcon className="h-3.5 w-3.5" /> Entró {dateTimeFormat.format(new Date(session.inAt))}</p>
+              </div>
+              <span className="flex items-center gap-2 text-xs text-[#b26a00]"><span className="status-dot" /> Abierta</span>
+            </div>
+            <form className="grid gap-2 lg:grid-cols-[12rem_1fr_auto]">
+              <input type="hidden" name="employee_id" value={session.employeeId} />
+              <input type="hidden" name="clock_in_event_id" value={session.inEventId} />
+              <input type="datetime-local" name="out_local" required aria-label="Hora de salida" className="field text-sm" />
+              <input name="reason" placeholder="¿Qué pasó?" required aria-label="Motivo" className="field text-sm" />
+              <button formAction={closeOpenSession} className="btn-primary">Cerrar <CheckIcon /></button>
             </form>
           </li>
         ))}
         {openSessions.length === 0 && (
-          <li className="rounded border px-4 py-6 text-center text-sm text-gray-500">
-            No hay sesiones abiertas. Todo cuadrado.
+          <li className="empty-state">
+            <div><CheckIcon className="mx-auto mb-3 h-5 w-5" /><p className="text-sm">No hay pendientes. Todo bien.</p></div>
           </li>
         )}
       </ul>
 
       {recent.length > 0 && (
-        <>
-          <h2 className="mb-2 text-sm font-semibold">Correcciones recientes</h2>
-          <ul className="divide-y rounded border">
-            {recent.map((c) => (
-              <li key={c.id} className="flex items-center justify-between px-4 py-3 text-sm">
+        <section className="mt-12">
+          <div className="mb-2 flex items-center justify-between border-b border-[#deded7] pb-3">
+            <h2 className="text-sm font-semibold">Ajustes recientes</h2>
+            <AdjustIcon className="h-4 w-4 text-[#696963]" />
+          </div>
+          <ul className="divide-y divide-[#deded7]">
+            {recent.map((correction) => (
+              <li key={correction.id} className="flex flex-col justify-between gap-2 py-4 text-sm sm:flex-row sm:items-center">
                 <div>
-                  <p className="font-medium">{c.name}</p>
-                  <p className="text-gray-600">Salida → {dtFmt.format(new Date(c.corrected_time as string))}</p>
-                  <p className="text-xs text-gray-500">{c.reason}</p>
+                  <p className="font-medium">{correction.name}</p>
+                  <p className="mt-1 text-xs text-[#696963]">Salida · {dateTimeFormat.format(new Date(correction.corrected_time as string))} · {correction.reason}</p>
                 </div>
-                <span className="text-xs text-gray-400">{dtFmt.format(new Date(c.created_at as string))}</span>
+                <span className="font-mono text-[10px] text-[#96968e]">{dateTimeFormat.format(new Date(correction.created_at as string))}</span>
               </li>
             ))}
           </ul>
-        </>
+        </section>
       )}
     </main>
   )

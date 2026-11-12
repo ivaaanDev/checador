@@ -1,4 +1,6 @@
+import Link from 'next/link'
 import { login, signup } from './actions'
+import { ArrowUpRightIcon, LockIcon, MarkIcon } from '@/components/icons'
 
 export default async function LoginPage({
   searchParams,
@@ -8,27 +10,45 @@ export default async function LoginPage({
   const { error } = await searchParams
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-sm flex-col justify-center gap-4 p-6">
-      <h1 className="text-xl font-semibold">Checador · Acceso</h1>
-      {error && <p className="text-sm text-red-600">{error}</p>}
-      <form className="flex flex-col gap-3">
-        <input
-          name="email" type="email" placeholder="correo" required
-          className="rounded border px-3 py-2"
-        />
-        <input
-          name="password" type="password" placeholder="contraseña" required
-          className="rounded border px-3 py-2"
-        />
-        <div className="flex gap-2">
-          <button formAction={login} className="flex-1 rounded bg-black px-3 py-2 text-white">
-            Iniciar sesión
-          </button>
-          <button formAction={signup} className="flex-1 rounded border px-3 py-2">
-            Crear cuenta
-          </button>
+    <main className="auth-shell">
+      <section className="auth-intro">
+        <Link href="/login" className="brand" aria-label="Checador">
+          <span className="brand-mark"><MarkIcon /></span>
+          <span>checador.</span>
+        </Link>
+        <h1 className="auth-statement">Llegar. Checar. Listo.</h1>
+        <p className="auth-footnote">Menos hojas. Menos vueltas. Más tiempo.</p>
+      </section>
+
+      <section className="auth-form-wrap">
+        <div className="auth-form">
+          <span className="mb-5 grid h-10 w-10 place-items-center rounded-full bg-black text-white">
+            <LockIcon className="h-4 w-4" />
+          </span>
+          <p className="eyebrow mb-3">Tu espacio</p>
+          <h2 className="text-3xl font-semibold tracking-[-0.05em]">Qué bueno verte.</h2>
+          <p className="mt-2 text-sm text-[#696963]">Entra para ver cómo va el equipo.</p>
+
+          {error && <p className="error-note mt-6" role="alert">{error}</p>}
+
+          <form className="mt-8 flex flex-col gap-3">
+            <label className="flex flex-col gap-2 text-xs font-medium">
+              Correo
+              <input name="email" type="email" placeholder="tu@correo.com" required className="field" />
+            </label>
+            <label className="flex flex-col gap-2 text-xs font-medium">
+              Contraseña
+              <input name="password" type="password" placeholder="••••••••" required className="field" />
+            </label>
+            <button formAction={login} className="btn-primary mt-2 w-full">
+              Entrar <ArrowUpRightIcon />
+            </button>
+            <button formAction={signup} className="btn-secondary w-full">
+              Soy nuevo, crear cuenta
+            </button>
+          </form>
         </div>
-      </form>
+      </section>
     </main>
   )
 }

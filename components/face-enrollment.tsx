@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { saveFaceEnrollment } from '@/app/dashboard/employees/actions'
 import { averageEmbeddings, l2normalize, cosineSimilarity } from '@/lib/biometrics/vector'
+import { CameraIcon, CheckIcon, RefreshIcon } from '@/components/icons'
 
 type HumanFace = {
   embedding?: number[]
@@ -167,47 +168,57 @@ export function FaceEnrollment({
     }
   }
 
+  const progress = Math.min(100, (count / TARGET_CAPTURES) * 100)
+
   return (
     <div className="flex flex-col gap-4">
-      <div className="relative aspect-[4/3] w-full overflow-hidden rounded border bg-black">
+      <div className="relative aspect-[4/3] w-full overflow-hidden rounded-xl bg-black">
         <video ref={videoRef} muted playsInline className="h-full w-full object-cover" />
+        <div className="pointer-events-none absolute inset-[12%] rounded-[45%] border border-white/70 shadow-[0_0_0_999px_rgba(0,0,0,.2)]" />
+        {phase === 'capturing' && <div className="pointer-events-none absolute inset-x-[12%] top-[12%] h-px animate-[scan-line_2s_ease-in-out_infinite] bg-white/80 shadow-[0_0_10px_white]" />}
+        <span className="absolute left-4 top-4 rounded-full bg-black/55 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-white/70 backdrop-blur-md">
+          {phase === 'ready' ? 'Listo' : phase === 'capturing' ? `${count}/${TARGET_CAPTURES}` : phase === 'saving' ? 'Guardando' : phase}
+        </span>
       </div>
 
-      {phase === 'loading' && <p className="text-sm text-gray-600">Encendiendo cámara y cargando modelos…</p>}
+      <div className="min-h-20 px-1 pb-1" aria-live="polite">
+        {phase === 'loading' && <p className="text-sm text-[#696963]">Encendiendo cámara y cargando modelos…</p>}
 
-      {phase === 'ready' && (
-        <div className="flex flex-col gap-2">
-          <p className="text-sm text-gray-600">Encuadra tu rostro en la cámara y luego inicia.</p>
-          <button onClick={startCapture} className="w-fit rounded bg-black px-4 py-2 text-white">
-            Iniciar enrolamiento
-          </button>
-        </div>
-      )}
+        {phase === 'ready' && (
+          <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+            <p className="text-sm text-[#696963]">Centra tu rostro dentro del óvalo.</p>
+            <button onClick={startCapture} className="btn-primary w-fit"><CameraIcon /> Empezar</button>
+          </div>
+        )}
 
-      {phase === 'capturing' && (
-        <div className="text-sm text-gray-600">
-          <p>Capturas: {count}/{TARGET_CAPTURES}</p>
-          <p className="text-xs">{readout}</p>
-        </div>
-      )}
+        {phase === 'capturing' && (
+          <div>
+            <div className="mb-3 h-1 overflow-hidden rounded-full bg-[#deded7]">
+              <div className="h-full rounded-full bg-black transition-[width] duration-300" style={{ width: `${progress}%` }} />
+            </div>
+            <div className="flex items-center justify-between gap-3 text-sm">
+              <p className="font-medium">Quédate mirando al frente.</p>
+              <p className="font-mono text-[10px] text-[#696963]">{readout}</p>
+            </div>
+          </div>
+        )}
 
-      {phase === 'saving' && <p className="text-sm text-gray-600">Guardando rostro…</p>}
+        {phase === 'saving' && <p className="animate-pulse text-sm text-[#696963]">Guardando tu mejor toma…</p>}
 
-      {phase === 'done' && (
-        <div className="flex items-center gap-3">
-          <p className="text-sm text-green-700">✓ Rostro enrolado para {employeeName}.</p>
-          <button onClick={() => router.push('/dashboard/employees')}
-            className="rounded border px-3 py-1 text-sm">Volver a empleados</button>
-        </div>
-      )}
+        {phase === 'done' && (
+          <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+            <p className="success-note flex items-center gap-2"><CheckIcon className="h-4 w-4" /> Rostro listo para {employeeName}.</p>
+            <button onClick={() => router.push('/dashboard/employees')} className="btn-secondary">Volver al equipo</button>
+          </div>
+        )}
 
-      {phase === 'error' && (
-        <div className="flex flex-col gap-2">
-          <p className="text-sm text-red-600">{error}</p>
-          <button onClick={() => { startedRef.current = false; void boot() }}
-            className="w-fit rounded border px-3 py-1 text-sm">Reintentar</button>
-        </div>
-      )}
+        {phase === 'error' && (
+          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+            <p className="error-note">{error}</p>
+            <button onClick={() => { startedRef.current = false; void boot() }} className="btn-secondary w-fit"><RefreshIcon /> Reintentar</button>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
