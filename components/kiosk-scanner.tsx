@@ -243,6 +243,7 @@ export function KioskScanner() {
       })
       const data = await res.json().catch(() => ({ ok: false }))
       if (res.status === 401) return showResult({ matched: false, message: 'Kiosco no autorizado' })
+      if (res.status === 429) return showResult({ matched: false, message: 'Demasiados intentos, espera un momento' })
       if (!data.ok) return showResult({ matched: false, message: data.error ?? 'Error' })
       if (data.duplicate) return showResult({ matched: true, duplicate: true, employeeName: data.employeeName })
       if (!data.matched) return showResult({ matched: false, message: 'Rostro no reconocido' })
