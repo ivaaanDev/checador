@@ -56,23 +56,33 @@ export async function saveFaceEnrollment(
 
   const ciphertext = encryptEmbedding(embedding)
 
-  // Re-enrolar reemplaza: desactiva las plantillas faciales previas.
-  await supabase
+  // Primero se inserta la nueva y DESPUÉS se desactivan las anteriores. Al revés,
+  // si el insert falla el empleado se queda sin ningún rostro activo.
+  const { data: created, error } = await supabase
+    .from('biometric_templates')
+    .insert({
+      business_id: employee.business_id,
+      employee_id: employeeId,
+      modality: 'face',
+      embedding: ciphertext,
+      model_version: 'human-faceres',
+      quality_score: qualityScore,
+      enrolled_by: user.id,
+    })
+    .select('id')
+    .single()
+  if (error || !created) return { ok: false, error: error?.message ?? 'No se pudo guardar el rostro' }
+
+  const { error: deactivateError } = await supabase
     .from('biometric_templates')
     .update({ is_active: false })
     .eq('employee_id', employeeId)
     .eq('modality', 'face')
-
-  const { error } = await supabase.from('biometric_templates').insert({
-    business_id: employee.business_id,
-    employee_id: employeeId,
-    modality: 'face',
-    embedding: ciphertext,
-    model_version: 'human-faceres',
-    quality_score: qualityScore,
-    enrolled_by: user.id,
-  })
-  if (error) return { ok: false, error: error.message }
+    .neq('id', created.id)
+  if (deactivateError) {
+    // El rostro nuevo ya quedó guardado; solo falló retirar los viejos.
+    console.error('[enroll] no se desactivaron plantillas previas:', deactivateError.message)
+  }
 
   revalidatePath('/dashboard/employees')
   return { ok: true }

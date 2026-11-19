@@ -1,13 +1,13 @@
 import Link from 'next/link'
-import { login, signup } from './actions'
+import { login } from './actions'
 import { ArrowUpRightIcon, LockIcon, MarkIcon } from '@/components/icons'
 
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string }>
+  searchParams: Promise<{ error?: string; message?: string }>
 }) {
-  const { error } = await searchParams
+  const { error, message } = await searchParams
 
   return (
     <main className="auth-shell">
@@ -30,22 +30,25 @@ export default async function LoginPage({
           <p className="mt-2 text-sm text-[#696963]">Entra para ver cómo va el equipo.</p>
 
           {error && <p className="error-note mt-6" role="alert">{error}</p>}
+          {message && !error && (
+            <p className="mt-6 rounded-xl border border-[#deded7] bg-white p-3 text-sm text-[#3f3f3a]" role="status">{message}</p>
+          )}
 
-          <form className="mt-8 flex flex-col gap-3">
+          <form action={login} className="mt-8 flex flex-col gap-3">
             <label className="flex flex-col gap-2 text-xs font-medium">
               Correo
-              <input name="email" type="email" placeholder="tu@correo.com" required className="field" />
+              <input name="email" type="email" placeholder="tu@correo.com" autoComplete="email" required className="field" />
             </label>
             <label className="flex flex-col gap-2 text-xs font-medium">
               Contraseña
-              <input name="password" type="password" placeholder="••••••••" required className="field" />
+              <input name="password" type="password" placeholder="••••••••" autoComplete="current-password" required className="field" />
             </label>
-            <button formAction={login} className="btn-primary mt-2 w-full">
+            <button type="submit" className="btn-primary mt-2 w-full">
               Entrar <ArrowUpRightIcon />
             </button>
-            <button formAction={signup} className="btn-secondary w-full">
+            <Link href="/signup" className="btn-secondary w-full">
               Soy nuevo, crear cuenta
-            </button>
+            </Link>
           </form>
         </div>
       </section>
