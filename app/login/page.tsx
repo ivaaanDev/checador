@@ -5,9 +5,9 @@ import { ArrowUpRightIcon, LockIcon, MarkIcon } from '@/components/icons'
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string }>
+  searchParams: Promise<{ error?: string; message?: string }>
 }) {
-  const { error } = await searchParams
+  const { error, message } = await searchParams
 
   return (
     <main className="auth-shell">
@@ -30,6 +30,9 @@ export default async function LoginPage({
           <p className="mt-2 text-sm text-[#696963]">Entra para ver cómo va el equipo.</p>
 
           {error && <p className="error-note mt-6" role="alert">{error}</p>}
+          {message && !error && (
+            <p className="mt-6 rounded-xl border border-[#deded7] bg-white p-3 text-sm text-[#3f3f3a]" role="status">{message}</p>
+          )}
 
           <form className="mt-8 flex flex-col gap-3">
             <label className="flex flex-col gap-2 text-xs font-medium">

@@ -3,6 +3,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { CheckIcon, MarkIcon, RefreshIcon } from '@/components/icons'
+import { cosineSimilarity } from '@/lib/biometrics/vector'
 
 type HumanFace = {
   embedding?: number[]
@@ -25,6 +26,10 @@ const MIN_LIVE = 0.75
 const MIN_FACE_WIDTH_RATIO = 0.25
 const FRONTAL_YAW_MAX = 0.18
 const TURN_YAW_MIN = 0.45
+// El rostro al terminar el reto debe ser el MISMO que al empezar. Evita que una
+// foto pase el filtro frontal y otra persona haga el giro. Calíbralo con el
+// "sim" del readout: la misma persona suele dar bastante más que esto.
+const SAME_PERSON_MIN = 0.75
 const CHALLENGE_MS = 7000
 const RESULT_MS = 3500
 const TOKEN_KEY = 'kioskDeviceToken'
@@ -51,6 +56,11 @@ export function KioskScanner() {
   const armedRef = useRef(true)
   const challengeStartRef = useRef(0)
   const tokenRef = useRef('')
+  // Candados: el loop usa setInterval con detect() async, así que los ticks se
+  // pueden encimar. detectingRef evita detecciones simultáneas; submittingRef
+  // evita mandar la misma checada dos veces.
+  const detectingRef = useRef(false)
+  const submittingRef = useRef(false)
 
   const [phase, setPhase] = useState<Phase>('setup')
   const [tokenInput, setTokenInput] = useState('')
@@ -116,6 +126,7 @@ export function KioskScanner() {
     clearResultTimer()
     candidateRef.current = null
     turnedRef.current = false
+    submittingRef.current = false
     armedRef.current = !requireClear
     setOutcome(null)
     setPhase('scanning')
@@ -132,10 +143,21 @@ export function KioskScanner() {
     startScanning(false)
   }
 
-  async function scanTick() {
+  async function detectFaces(): Promise<HumanFace[] | null> {
     const human = humanRef.current, video = videoRef.current
-    if (!human || !video) return
-    const faces = (await human.detect(video)).face ?? []
+    if (!human || !video || detectingRef.current) return null
+    detectingRef.current = true
+    try {
+      return (await human.detect(video)).face ?? []
+    } finally {
+      detectingRef.current = false
+    }
+  }
+
+  async function scanTick() {
+    const video = videoRef.current
+    const faces = await detectFaces()
+    if (!faces || !video || submittingRef.current) return
 
     if (faces.length === 0) { armedRef.current = true; setReadout('sin rostro'); return }
     if (faces.length > 1) { setHint('Una persona a la vez'); return }
@@ -169,20 +191,45 @@ export function KioskScanner() {
   }
 
   async function challengeTick() {
-    const human = humanRef.current, video = videoRef.current
-    if (!human || !video) return
+    if (submittingRef.current) return
     if (Date.now() - challengeStartRef.current > CHALLENGE_MS) { startScanning(false); return }
 
-    const faces = (await human.detect(video)).face ?? []
+    const faces = await detectFaces()
+    if (!faces || submittingRef.current) return
+    if (faces.length > 1) {
+      // Alguien más entró al cuadro a media verificación: se reinicia.
+      stopLoop()
+      showResult({ matched: false, message: 'Una persona a la vez' })
+      return
+    }
     if (faces.length !== 1) return
-    const yaw = faces[0].rotation?.angle?.yaw ?? 0
+
+    const f = faces[0]
+    const yaw = f.rotation?.angle?.yaw ?? 0
     setReadout(`reto · yaw ${yaw.toFixed(2)}`)
 
     if (Math.abs(yaw) > TURN_YAW_MIN) { turnedRef.current = true; setHint('Ahora vuelve al frente') }
-    if (turnedRef.current && Math.abs(yaw) < FRONTAL_YAW_MAX) void submit()
+    if (!turnedRef.current || Math.abs(yaw) >= FRONTAL_YAW_MAX) return
+
+    // De vuelta al frente: el rostro FINAL debe ser el mismo que el inicial.
+    const initial = candidateRef.current
+    if (!initial || !f.embedding?.length) return // aún sin embedding en este frame
+    const sim = cosineSimilarity(f.embedding, initial)
+    setReadout(`reto · yaw ${yaw.toFixed(2)} · sim ${sim.toFixed(2)}`)
+    if (sim < SAME_PERSON_MIN) {
+      stopLoop()
+      showResult({ matched: false, message: 'El rostro cambió durante la verificación' })
+      return
+    }
+
+    // Se identifica con el frame FINAL: el que demostró estar vivo.
+    candidateRef.current = f.embedding
+    void submit()
   }
 
   async function submit() {
+    if (submittingRef.current) return
+    submittingRef.current = true
     stopLoop()
     setPhase('matching')
     setHint('Verificando…')

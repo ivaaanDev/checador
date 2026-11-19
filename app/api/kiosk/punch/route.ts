@@ -35,11 +35,26 @@ export async function POST(req: NextRequest) {
   }
 
   let best = { employeeId: '', score: -1 }
+  const unreadable: string[] = []
   for (const t of templates) {
-    const ref = decryptEmbedding(t.embedding as string)
+    // Una plantilla cifrada con otra llave (o corrupta) hace que decrypt lance.
+    // Se salta para que no tumbe el match de todos los demás, pero se reporta.
+    let ref: number[]
+    try {
+      ref = decryptEmbedding(t.embedding as string)
+    } catch {
+      unreadable.push(t.employee_id as string)
+      continue
+    }
     if (ref.length !== embedding.length) continue
     const score = cosineSimilarity(embedding, ref)
     if (score > best.score) best = { employeeId: t.employee_id, score }
+  }
+  if (unreadable.length > 0) {
+    console.error(
+      `[punch] ${unreadable.length} plantilla(s) ilegible(s) en el negocio ${device.business_id}. ` +
+      `¿Cambió BIOMETRIC_ENC_KEY? Re-enrola a: ${unreadable.join(', ')}`,
+    )
   }
   if (best.score < MATCH_THRESHOLD) {
     return NextResponse.json({ ok: true, matched: false, score: best.score })
